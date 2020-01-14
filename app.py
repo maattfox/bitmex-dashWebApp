@@ -11,7 +11,7 @@ import pymongo
 
 # CONFIG ---------------------------------------------------------------------------------------
 
-NUMBER_OF_QUOTES = 10000
+NUMBER_OF_QUOTES = 1000
 
 
 # Databases ------------------------------------------------------------------------------------
@@ -22,6 +22,8 @@ database = client.bitmexOrderBook
 
 quotesCollection = database.quotes
 tradesCollection = database.trades
+
+obUpdatesCollection = database.ob_update
 
 
 
@@ -42,7 +44,7 @@ app.layout = html.Div(children=[
     dcc.Graph(id='live-update-quotes-graph'),
     dcc.Interval(
         id='interval-component',
-        interval=10 * 1000,  # in milliseconds
+        interval=2 * 1000,  # in milliseconds
         n_intervals=0
     )
 ])
@@ -52,18 +54,55 @@ app.layout = html.Div(children=[
 # CALLBACKS ------------------------------------------------------------------------------------
 
 # Update Quotes
-@app.callback(Output('live-update-quotes-graph', 'figure'),
-              [Input('interval-component', 'n_intervals')])
+@app.callback(Output('live-update-quotes-graph', 'figure'), [Input('interval-component', 'n_intervals')])
 def update_graph_live(n):
 
-    # Collect some data
+    # Collect quotes
+
     quotesData = quotesCollection.find().skip(quotesCollection.count() - NUMBER_OF_QUOTES)
-    #quotesData = quotesCollection.find()
     quotesDF = pd.DataFrame(quotesData)
+
+
+    ylim = [quotesDF.tail(1).bidPrice.values[0] - 20, quotesDF.tail(1).askPrice.values[0] + 20 ]
+
+
+    # Collect trades
+    tradesData = tradesCollection.find({"timestamp": {"$gt": quotesDF.head(1).timestamp.values[0] }})
+    tradesDF = pd.DataFrame(tradesData)
+
+    sellTrades = tradesDF[tradesDF['side'] == "Sell"]
+    buyTrades = tradesDF[tradesDF['side'] == "Buy"]
+
+
+    # Orderbook Updates
+
+    obUpdatesData = obUpdatesCollection.find({"timestamp": {"$gt": quotesDF.head(1).timestamp.values[0]}, "price": {"$lt": ylim[1], "$gt": ylim[0]}})
+    obUpdatesDF = pd.DataFrame(obUpdatesData)
+
+
+
+    # Chart options
+
+
+
 
     # Create the graph with subplots
     figure ={
             "data": [
+                {
+                    "x": obUpdatesDF["timestamp"],
+                    "y": obUpdatesDF["price"],
+                    "name": "Orderbook Updates",
+                    "mode": "markers",
+                    "text": obUpdatesDF['size'],
+                    "marker":
+                        { "color": obUpdatesDF['size'],
+                            "size": 5,
+                            "colorscale": 'Jet',
+                            "cmin" : 0,
+                            "cmax": 1000000
+                        }
+                },
                 {
                     "x": quotesDF["timestamp"],
                     "y": quotesDF["bidPrice"],
@@ -77,6 +116,22 @@ def update_graph_live(n):
                     "name" : "Ask Price",
                     "type": "line",
                     "marker": {"color": "#ff0000"},
+                },
+                {
+                    "x": sellTrades["timestamp"],
+                    "y": sellTrades["price"],
+                    "name": "Sell Trades",
+                    "mode": "markers",
+                    "marker_color": sellTrades['size'],
+                    "text": sellTrades['size']
+                },
+                {
+                    "x": buyTrades["timestamp"],
+                    "y": buyTrades["price"],
+                    "name": "Buy Trades",
+                    "mode": "markers",
+                    "marker_color": sellTrades['size'],
+                    "text": sellTrades['size']
                 }
             ],
 
@@ -85,14 +140,23 @@ def update_graph_live(n):
 
                 "xaxis": {
                     "automargin": True,
-                    "title": {"text": "Timestamp"}
+                    "title": {"text": "Timestamp"},
+                    "linecolor": 'white',
+                    "showgrid": False
+
                 },
                 "yaxis": {
                     "automargin": True,
-                    "title": {"text": "Price"}
+                    "title": {"text": "Price"},
+                    "range": ylim,
+                    "linecolor": 'white',
+                    "dtick": 1,
+                    "showgrid": True
                     },
-                "height": 250,
-                "margin": {"t": 10, "l": 10, "r": 10}
+                "height": 800,
+                "margin": {"t": 10, "l": 10, "r": 10},
+                "plot_bgcolor": "rgb(0, 0, 0)",
+                "autosize": True
             }
         }
 
